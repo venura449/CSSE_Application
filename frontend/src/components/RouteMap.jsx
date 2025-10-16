@@ -181,7 +181,7 @@ export default function RouteMap({ events }) {
       <div className="flex gap-3 mb-2 items-center">
         <div>
           <label className="text-xs text-gray-600">Start</label>
-          <select className="border rounded p-1" value={startId} onChange={e => setStartId(e.target.value)}>
+          <select className="border rounded p-1 m-2" value={startId} onChange={e => setStartId(e.target.value)}>
             <option value="">(auto)</option>
             <option value="__my">My Location</option>
             {events.map(ev => <option key={ev.id} value={ev.id}>{ev.type} • {ev.time || ''}</option>)}
@@ -189,7 +189,7 @@ export default function RouteMap({ events }) {
         </div>
         <div>
           <label className="text-xs text-gray-600">End</label>
-          <select className="border rounded p-1" value={endId} onChange={e => setEndId(e.target.value)}>
+          <select className="border rounded p-1 m-2" value={endId} onChange={e => setEndId(e.target.value)}>
             <option value="">(none)</option>
             {events.map(ev => <option key={ev.id} value={ev.id}>{ev.type} • {ev.time || ''}</option>)}
           </select>

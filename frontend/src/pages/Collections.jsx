@@ -266,11 +266,13 @@ export default function Collections() {
 
           <div className="bg-white p-6 rounded-xl shadow-sm">
             <h3 className="font-semibold mb-2">Today's Route</h3>
-            <div className="h-64 rounded-lg border p-2">
-              <RouteMap events={schedules.filter(s => {
-                const today = new Date();
-                return s.date.getFullYear() === today.getFullYear() && s.date.getMonth() === today.getMonth() && s.date.getDate() === today.getDate();
-              })} />
+            <div className="rounded-lg border overflow-auto max-h-[420px]">
+              <div className="min-w-[640px] min-h-[360px] p-2">
+                <RouteMap events={schedules.filter(s => {
+                  const today = new Date();
+                  return s.date.getFullYear() === today.getFullYear() && s.date.getMonth() === today.getMonth() && s.date.getDate() === today.getDate();
+                })} />
+              </div>
             </div>
           </div>
         </main>
