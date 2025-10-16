@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, Lock } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
+import FieldHint from '../components/FieldHint';
 
 export default function Signup() {
   const [email, setEmail] = useState('');
@@ -40,6 +41,7 @@ export default function Signup() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
             <input value={name} onChange={e => setName(e.target.value)} className="w-full py-2 px-3 border rounded-lg" />
+            <FieldHint>Text — your full name (e.g., Jane Doe)</FieldHint>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
@@ -47,6 +49,7 @@ export default function Signup() {
               <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
               <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="Enter your email"
                 className="w-full pl-10 pr-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-green-400" />
+              <FieldHint>Valid email address (e.g., user@example.com)</FieldHint>
             </div>
           </div>
           <div>
@@ -55,6 +58,7 @@ export default function Signup() {
               <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
               <input value={password} onChange={e => setPassword(e.target.value)} type="password" placeholder="Create a password"
                 className="w-full pl-10 pr-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-green-400" />
+                <FieldHint>Minimum 8 characters recommended</FieldHint>
             </div>
           </div>
           {error && <div className="text-red-600 text-sm">{error}</div>}

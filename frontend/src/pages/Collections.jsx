@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Calendar as CalendarIcon, Clock, MapPin, Filter, X, PlusCircle, Upload, DollarSign, TrendingUp } from "lucide-react";
+import FieldHint from '../components/FieldHint';
 import { loadSchedules, saveSchedules, addSchedule as addScheduleToStore, removeScheduleById } from "../data/collectionsData";
 import RouteMap from '../components/RouteMap';
 
@@ -98,13 +99,16 @@ export default function Collections() {
     const token = localStorage.getItem('token');
     if (!token) return;
     try {
-      const res = await fetch((import.meta.env.VITE_API_URL || 'http://127.0.0.1:3000') + '/api/schedules', { headers: { Authorization: `Bearer ${token}` } });
+      // If Authority, fetch all collections; otherwise fetch own schedules
+      const user = (() => { try { return JSON.parse(localStorage.getItem('user') || 'null'); } catch (e) { return null; } })();
+      const endpoint = user && user.role === 'Authority' ? '/api/collections' : '/api/schedules';
+      const res = await fetch((import.meta.env.VITE_API_URL || 'http://127.0.0.1:3000') + endpoint, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error('Failed to load');
       const items = await res.json();
       // convert date strings to Date
       const converted = items.map(i => {
         // normalize type: backend may send 'Special: Electronics' or similar; normalize to 'special'
-        let t = (i.type || '').toString();
+        let t = (i.type || i.rawType || '').toString();
         const tl = t.toLowerCase();
         let norm = tl;
         if (tl.startsWith('special')) norm = 'special';
@@ -114,7 +118,9 @@ export default function Collections() {
         else norm = tl;
         // detect paid special schedules created from paid collection requests
         const paidSpecial = !!(i.type && i.type.toString().toLowerCase().startsWith('special')) && (i.status && i.status.toLowerCase() === 'scheduled');
-        return { id: i.id, date: new Date(i.date), type: norm, rawType: i.type, time: i.time || i.time_label || '', status: i.status, location: i.location, meta: i.meta, paidSpecial };
+        // pick date from multiple possible fields
+        const dateVal = i.date || i.scheduled_at || i.scheduledAt || i.scheduledAt || i.preferred_datetime || i.created_at || null;
+        return { id: i.id, date: dateVal ? new Date(dateVal) : new Date(), type: norm, rawType: i.type || i.rawType, time: i.time || i.time_label || '', status: i.status, location: i.location, meta: i.meta, paidSpecial };
       });
       setSchedules(converted);
     } catch (e) {
@@ -311,10 +317,12 @@ export default function Collections() {
               <label className="block">
                 <div className="text-gray-600 mb-1">Date</div>
                 <input type="date" className="w-full border rounded-lg p-2" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
+                <FieldHint>Format: YYYY-MM-DD</FieldHint>
               </label>
               <label className="block">
                 <div className="text-gray-600 mb-1">Time</div>
                 <input type="text" placeholder="e.g. 9:00 AM" className="w-full border rounded-lg p-2" value={newTime} onChange={(e) => setNewTime(e.target.value)} />
+                <FieldHint>Example: 9:00 AM or 14:30</FieldHint>
               </label>
               <button className="w-full bg-green-600 text-white py-2 rounded-lg mt-2" onClick={addSchedule}>Add Schedule</button>
             </div>

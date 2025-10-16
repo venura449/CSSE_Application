@@ -69,9 +69,10 @@ async function createPoolAndEnsure() {
         preferred_time_label VARCHAR(64),
         photos TEXT,
         estimated_cost DECIMAL(10,2) DEFAULT 0,
-        status VARCHAR(64) DEFAULT 'PendingPayment',
+          status VARCHAR(64) DEFAULT 'PendingPayment',
         payment_required TINYINT(1) DEFAULT 1,
         payment_id INT NULL,
+          assigned_collector_id INT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         paid_at DATETIME NULL,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -110,6 +111,19 @@ async function createPoolAndEnsure() {
         console.warn('Could not ensure role column exists:', ee.message || ee);
       }
     }
+      // Ensure collection_requests has assigned_collector_id column for older databases
+      try {
+        await conn.query("ALTER TABLE collection_requests ADD COLUMN IF NOT EXISTS assigned_collector_id INT NULL");
+      } catch (e) {
+        try {
+          const [cols] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'collection_requests' AND COLUMN_NAME = 'assigned_collector_id'", [DB_NAME]);
+          if (!cols || cols.length === 0) {
+            await conn.query("ALTER TABLE collection_requests ADD COLUMN assigned_collector_id INT NULL");
+          }
+        } catch (ee) {
+          console.warn('Could not ensure assigned_collector_id column exists:', ee.message || ee);
+        }
+      }
     // create schedules table
     const createSchedules = `
       CREATE TABLE IF NOT EXISTS schedules (
@@ -212,11 +226,12 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// role check helper: require a specific role
+// role check helper: require a specific role (accepts string or array)
 function ensureRole(role) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Missing token' });
-    if (req.user.role !== role) return res.status(403).json({ error: 'Forbidden' });
+    const allowed = Array.isArray(role) ? role : [role];
+    if (!allowed.includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
     return next();
   };
 }
@@ -275,23 +290,80 @@ app.post('/api/collections/request', authMiddleware, async (req, res) => {
   }
 });
 
-// List special collection requests for current user (Residents) or all (Authority) or assigned (Collector)
+// List special collection requests for current user (Residents) or all (Authority/Admin) or assigned (Collector)
 app.get('/api/collections/requests', authMiddleware, async (req, res) => {
   try {
     const conn = await pool.getConnection();
     try {
       if (req.user.role === 'Collector') {
         // collectors see scheduled/assigned/paid requests (they perform collection)
-        const [rows] = await conn.query("SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests WHERE status IN ('Scheduled','Assigned','Paid') ORDER BY created_at DESC");
-        return res.json(rows.map(r => ({ id: r.id, user_id: r.user_id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, created_at: r.created_at, paid_at: r.paid_at })));
+        const sqlWith = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, assigned_collector_id, created_at, paid_at FROM collection_requests WHERE status IN ('Scheduled','Assigned','Paid') ORDER BY created_at DESC`;
+        const sqlWithout = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests WHERE status IN ('Scheduled','Assigned','Paid') ORDER BY created_at DESC`;
+        let rows;
+        try {
+          [rows] = await conn.query(sqlWith);
+        } catch (err) {
+          if (err && (err.code === 'ER_BAD_FIELD_ERROR' || err.errno === 1054) && String(err.sqlMessage || '').includes('assigned_collector_id')) {
+            console.warn('assigned_collector_id missing, falling back to query without that column for collectors');
+            [rows] = await conn.query(sqlWithout);
+          } else throw err;
+        }
+        return res.json(rows.map(r => ({ id: r.id, user_id: r.user_id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, assigned_collector_id: r.assigned_collector_id || null, created_at: r.created_at, paid_at: r.paid_at })));
       }
       if (req.user.role === 'Resident') {
         const [rows] = await conn.query('SELECT id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
         return res.json(rows.map(r => ({ id: r.id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, created_at: r.created_at, paid_at: r.paid_at })));
       }
-      // Authority: see all
-      const [rows] = await conn.query('SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests ORDER BY created_at DESC');
-      return res.json(rows.map(r => ({ id: r.id, user_id: r.user_id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, created_at: r.created_at, paid_at: r.paid_at })));
+      // Authority/Admin: see all
+      const sqlWithAll = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, assigned_collector_id, created_at, paid_at FROM collection_requests ORDER BY created_at DESC`;
+      const sqlWithoutAll = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests ORDER BY created_at DESC`;
+      let rowsAll;
+      try {
+        [rowsAll] = await conn.query(sqlWithAll);
+      } catch (err) {
+        if (err && (err.code === 'ER_BAD_FIELD_ERROR' || err.errno === 1054) && String(err.sqlMessage || '').includes('assigned_collector_id')) {
+          console.warn('assigned_collector_id missing, falling back to authority query without that column');
+          [rowsAll] = await conn.query(sqlWithoutAll);
+        } else throw err;
+      }
+      return res.json(rowsAll.map(r => ({ id: r.id, user_id: r.user_id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, assigned_collector_id: r.assigned_collector_id || null, created_at: r.created_at, paid_at: r.paid_at })));
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// List collectors (users with role = 'Collector')
+app.get('/api/collectors', authMiddleware, ensureAnyRole(['Authority','Admin','Collector']), async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const [rows] = await conn.query('SELECT id, email, name FROM users WHERE role = ? ORDER BY name ASC', ['Collector']);
+      return res.json(rows.map(r => ({ id: r.id, email: r.email, name: r.name })));
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Assign a collector to a collection request (Authority/Admin only)
+app.post('/api/collections/request/:id/assign', authMiddleware, ensureRole(['Authority','Admin']), async (req, res) => {
+  const id = req.params.id;
+  const { collector_id } = req.body;
+  if (!collector_id) return res.status(400).json({ error: 'collector_id required' });
+  try {
+    const conn = await pool.getConnection();
+    try {
+      // ensure request exists
+      const [rows] = await conn.query('SELECT id FROM collection_requests WHERE id = ?', [id]);
+      if (!rows || rows.length === 0) return res.status(404).json({ error: 'Request not found' });
+      // ensure collector exists
+      const [crows] = await conn.query('SELECT id FROM users WHERE id = ? AND role = ?', [collector_id, 'Collector']);
+      if (!crows || crows.length === 0) return res.status(400).json({ error: 'Collector not found' });
+      await conn.query('UPDATE collection_requests SET assigned_collector_id = ?, status = ? WHERE id = ?', [collector_id, 'Assigned', id]);
+      return res.json({ ok: true });
     } finally { conn.release(); }
   } catch (err) {
     console.error(err);

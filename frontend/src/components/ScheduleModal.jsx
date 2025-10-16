@@ -100,10 +100,12 @@ export default function ScheduleModal({ defaultType = 'recycling', onClose, onAd
             <label className="block">
               <div className="text-gray-600 mb-1">Date</div>
               <input type="date" className="w-full border rounded-lg p-2" value={date} onChange={(e) => setDate(e.target.value)} />
+            <div className="text-xs text-gray-400 mt-1">Date — select a date (YYYY-MM-DD)</div>
             </label>
             <label className="block">
               <div className="text-gray-600 mb-1">Time</div>
               <input type="text" className="w-full border rounded-lg p-2" value={time} onChange={(e) => setTime(e.target.value)} />
+              <div className="text-xs text-gray-400 mt-1">Time — label like "9:00 AM" or "14:00"</div>
             </label>
             <div className="flex gap-2">
               <button className="px-4 py-2 bg-green-600 text-white rounded" onClick={handleAdd}>Add</button>

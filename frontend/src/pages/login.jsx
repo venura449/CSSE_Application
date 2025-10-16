@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Mail, Lock } from "lucide-react";
 import { useNavigate, Link } from 'react-router-dom';
+import FieldHint from '../components/FieldHint';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -55,6 +56,7 @@ export default function Login() {
               <input value={email} onChange={e => setEmail(e.target.value)}
                 type="email" placeholder="Enter your email"
                 className="w-full pl-10 pr-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-green-400" />
+              <FieldHint>Valid email address (e.g., user@example.com)</FieldHint>
             </div>
           </div>
 
@@ -65,6 +67,7 @@ export default function Login() {
               <input value={password} onChange={e => setPassword(e.target.value)}
                 type="password" placeholder="Enter your password"
                 className="w-full pl-10 pr-3 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-green-400" />
+              <FieldHint>Use your account password</FieldHint>
             </div>
           </div>
 
