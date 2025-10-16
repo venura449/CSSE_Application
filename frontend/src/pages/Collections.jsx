@@ -102,7 +102,20 @@ export default function Collections() {
       if (!res.ok) throw new Error('Failed to load');
       const items = await res.json();
       // convert date strings to Date
-      const converted = items.map(i => ({ id: i.id, date: new Date(i.date), type: i.type, time: i.time || i.time_label || '', status: i.status, location: i.location }));
+      const converted = items.map(i => {
+        // normalize type: backend may send 'Special: Electronics' or similar; normalize to 'special'
+        let t = (i.type || '').toString();
+        const tl = t.toLowerCase();
+        let norm = tl;
+        if (tl.startsWith('special')) norm = 'special';
+        else if (tl.includes('recycling')) norm = 'recycling';
+        else if (tl.includes('organic')) norm = 'organic';
+        else if (tl.includes('general')) norm = 'general';
+        else norm = tl;
+        // detect paid special schedules created from paid collection requests
+        const paidSpecial = !!(i.type && i.type.toString().toLowerCase().startsWith('special')) && (i.status && i.status.toLowerCase() === 'scheduled');
+        return { id: i.id, date: new Date(i.date), type: norm, rawType: i.type, time: i.time || i.time_label || '', status: i.status, location: i.location, meta: i.meta, paidSpecial };
+      });
       setSchedules(converted);
     } catch (e) {
       console.error(e);
@@ -130,15 +143,19 @@ export default function Collections() {
   const monthName = currentMonth.toLocaleString("default", { month: "long" });
   const year = currentMonth.getFullYear();
 
-  const filteredSchedules = schedules.filter((s) => activeFilter[s.type]);
+  // Separate normal schedules (recycling, general, organic) from special schedules
+  const normalScheduleTypes = ['recycling', 'general', 'organic'];
+  // include paid special schedules in normal view (they should appear in calendar) but keep them visually distinct
+  const normalSchedules = schedules.filter((s) => (normalScheduleTypes.includes((s.type || '').toLowerCase()) || s.paidSpecial) && activeFilter[s.type]);
+  const specialSchedules = schedules.filter((s) => (s.type || '').toLowerCase() === 'special' && !s.paidSpecial);
 
   function getScheduleForDate(date) {
-    return filteredSchedules.filter(
+    return normalSchedules.filter(
       (s) => s.date.getFullYear() === date.getFullYear() && s.date.getMonth() === date.getMonth() && s.date.getDate() === date.getDate()
     );
   }
 
-  const upcoming = filteredSchedules
+  const upcoming = normalSchedules
     .filter((s) => s.date >= new Date(year, currentMonth.getMonth(), 1))
     .sort((a, b) => a.date - b.date)
     .slice(0, 4);
@@ -168,8 +185,8 @@ export default function Collections() {
                   </span>
                 </div>
                 <div className="mt-3 flex items-center gap-2 text-sm">
-                  <span className={`w-2 h-2 rounded-full ${item.type === "recycling" ? "bg-green-500" : item.type === "general" ? "bg-blue-500" : item.type === "organic" ? "bg-orange-500" : "bg-purple-500"}`}></span>
-                  <span className="capitalize">{item.type} waste</span>
+                  <span className={`w-2 h-2 rounded-full ${item.paidSpecial ? 'bg-yellow-500' : (item.type === "recycling" ? "bg-green-500" : item.type === "general" ? "bg-blue-500" : item.type === "organic" ? "bg-orange-500" : "bg-purple-500")}`}></span>
+                  <span className="capitalize">{item.paidSpecial ? 'Special (Paid)' : `${item.type} waste`}</span>
                   <Clock size={14} className="text-gray-400 ml-auto" />
                   <span className="text-gray-600">{item.time}</span>
                 </div>
@@ -244,8 +261,8 @@ export default function Collections() {
                     </div>
                     <div className="mt-2 space-y-1">
                       {events.slice(0, 2).map((ev, i) => (
-                        <div key={i} className={`text-xs px-2 py-1 rounded-full w-fit ${ev.type === "recycling" ? "bg-green-100 text-green-700" : ev.type === "general" ? "bg-blue-100 text-blue-700" : ev.type === "organic" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700"}`}>
-                          {ev.type === "recycling" ? "Recycling" : ev.type === "general" ? "General" : ev.type === "organic" ? "Organic" : "Special"}
+                        <div key={i} className={`text-xs px-2 py-1 rounded-full w-fit ${ev.paidSpecial ? 'bg-yellow-100 text-yellow-700' : (ev.type === "recycling" ? "bg-green-100 text-green-700" : ev.type === "general" ? "bg-blue-100 text-blue-700" : ev.type === "organic" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}`}>
+                          {ev.paidSpecial ? 'Special (Paid)' : (ev.type === "recycling" ? "Recycling" : ev.type === "general" ? "General" : ev.type === "organic" ? "Organic" : "Special")}
                         </div>
                       ))}
                       {events.length > 2 && <div className="text-xs text-gray-400">+{events.length - 2} more</div>}
@@ -371,7 +388,7 @@ export default function Collections() {
                 <div key={ev.id} className="border rounded-lg p-3 flex items-center gap-3">
                   <span className={`w-2 h-2 rounded-full ${ev.type === "recycling" ? "bg-green-500" : ev.type === "general" ? "bg-blue-500" : ev.type === "organic" ? "bg-orange-500" : "bg-purple-500"}`}></span>
                   <div className="flex-1">
-                    <div className="font-medium capitalize">{ev.type === "special" ? `Special Pickup${ev.meta?.item ? ` • ${ev.meta.item}` : ""}` : `${ev.type} waste`}</div>
+                    <div className="font-medium capitalize">{ev.paidSpecial ? `Special Pickup • Paid${ev.meta?.item ? ` • ${ev.meta.item}` : ""}` : (ev.type === "special" ? `Special Pickup${ev.meta?.item ? ` • ${ev.meta.item}` : ""}` : `${ev.type} waste`)}</div>
                     <div className="text-xs text-gray-500 flex items-center gap-2"><Clock size={14} /> {ev.time}</div>
                   </div>
                   <span className={`text-xs px-2 py-1 rounded-full ${ev.status === "Confirmed" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>{ev.status}</span>

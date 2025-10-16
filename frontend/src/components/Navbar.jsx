@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { useEffect, useState, useRef } from 'react';
 import ProfileOverlay from './ProfileOverlay';
 
@@ -43,11 +43,12 @@ export default function Navbar() {
 
         {/* 🔗 Navigation Links */}
         <div className="flex gap-6">
-          <Link to="/dashboard" className="text-green-700 font-medium border-b-2 border-green-600 pb-1">Dashboard</Link>
-          <Link to="/waste-history" className="text-gray-700 hover:text-green-600 font-medium">Waste History</Link>
-          <Link to="/collections" className="text-gray-700 hover:text-green-600 font-medium">Collections</Link>
-          <Link to="/payments" className="text-gray-700 hover:text-green-600 font-medium">Payments</Link>
-          <Link to="/settings" className="text-gray-700 hover:text-green-600 font-medium">Settings</Link>
+          <NavLink to="/dashboard" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Dashboard</NavLink>
+          <NavLink to="/waste-history" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Waste History</NavLink>
+          <NavLink to="/collections" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Collections</NavLink>
+          <NavLink to="/payments" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Payments</NavLink>
+          <NavLink to="/sensors" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Sensors</NavLink>
+          <NavLink to="/settings" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Settings</NavLink>
         </div>
 
         {/* 👤 User Info */}

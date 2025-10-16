@@ -51,6 +51,7 @@ async function createPoolAndEnsure() {
       id INT AUTO_INCREMENT PRIMARY KEY,
       email VARCHAR(255) NOT NULL UNIQUE,
       name VARCHAR(255),
+      role VARCHAR(50) NOT NULL DEFAULT 'Resident',
       password_hash VARCHAR(255) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB;
@@ -58,6 +59,57 @@ async function createPoolAndEnsure() {
   const conn = await pool.getConnection();
   try {
     await conn.query(createSql);
+    // Create collection_requests table for special collection requests
+    const createCollectionRequests = `
+      CREATE TABLE IF NOT EXISTS collection_requests (
+        id VARCHAR(64) PRIMARY KEY,
+        user_id INT NOT NULL,
+        item_type VARCHAR(128) NOT NULL,
+        preferred_datetime DATETIME NULL,
+        preferred_time_label VARCHAR(64),
+        photos TEXT,
+        estimated_cost DECIMAL(10,2) DEFAULT 0,
+        status VARCHAR(64) DEFAULT 'PendingPayment',
+        payment_required TINYINT(1) DEFAULT 1,
+        payment_id INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        paid_at DATETIME NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB;
+    `;
+    await conn.query(createCollectionRequests);
+
+    // Create payments table
+    const createPayments = `
+      CREATE TABLE IF NOT EXISTS payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        request_id VARCHAR(64) NULL,
+        user_id INT NULL,
+        collector_id INT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        currency VARCHAR(8) DEFAULT 'USD',
+        status VARCHAR(64) DEFAULT 'Completed',
+        details TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB;
+    `;
+    await conn.query(createPayments);
+    // Ensure existing installations get the 'role' column if it was added later
+    try {
+      await conn.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) NOT NULL DEFAULT 'Resident'");
+    } catch (e) {
+      // some MySQL versions might not support IF NOT EXISTS for ADD COLUMN
+      // attempt a safer ALTER only if column missing by checking information_schema
+      try {
+        const [cols] = await conn.query("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'", [DB_NAME]);
+        if (!cols || cols.length === 0) {
+          await conn.query("ALTER TABLE users ADD COLUMN role VARCHAR(50) NOT NULL DEFAULT 'Resident'");
+        }
+      } catch (ee) {
+        // log and continue; role detection will still work for new signups
+        console.warn('Could not ensure role column exists:', ee.message || ee);
+      }
+    }
     // create schedules table
     const createSchedules = `
       CREATE TABLE IF NOT EXISTS schedules (
@@ -88,12 +140,18 @@ app.post('/api/auth/signup', async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   try {
     const password_hash = await bcrypt.hash(password, 10);
+    // determine role by email domain (simple rule): @admin.com -> Authority, @collector.com -> Collector, otherwise Resident
+    let role = 'Resident';
+    const e = (email || '').toLowerCase();
+    if (e.endsWith('@admin.com')) role = 'Authority';
+    else if (e.endsWith('@collector.com')) role = 'Collector';
+
     const conn = await pool.getConnection();
     try {
-      const [result] = await conn.query('INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)', [email, name || null, password_hash]);
+      const [result] = await conn.query('INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, ?, ?)', [email, name || null, role, password_hash]);
       const userId = result.insertId;
-      const token = jwt.sign({ id: userId, email }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
-      return res.status(201).json({ token, user: { id: userId, email, name } });
+      const token = jwt.sign({ id: userId, email, role }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
+      return res.status(201).json({ token, user: { id: userId, email, name, role } });
     } finally {
       conn.release();
     }
@@ -111,13 +169,13 @@ app.post('/api/auth/signin', async (req, res) => {
   try {
     const conn = await pool.getConnection();
     try {
-      const [rows] = await conn.query('SELECT id, email, name, password_hash FROM users WHERE email = ?', [email]);
+      const [rows] = await conn.query('SELECT id, email, name, role, password_hash FROM users WHERE email = ?', [email]);
       const user = rows[0];
       if (!user) return res.status(401).json({ error: 'Invalid credentials' });
       const match = await bcrypt.compare(password, user.password_hash);
       if (!match) return res.status(401).json({ error: 'Invalid credentials' });
-      const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
-      return res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
+      const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET || 'secret', { expiresIn: '7d' });
+      return res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
     } finally {
       conn.release();
     }
@@ -154,10 +212,30 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// role check helper: require a specific role
+function ensureRole(role) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Missing token' });
+    if (req.user.role !== role) return res.status(403).json({ error: 'Forbidden' });
+    return next();
+  };
+}
+
+// role check helper: allow any of the listed roles
+function ensureAnyRole(roles = []) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Missing token' });
+    if (!roles.includes(req.user.role)) return res.status(403).json({ error: 'Forbidden' });
+    return next();
+  };
+}
+
 // Create schedule
 app.post('/api/schedules', authMiddleware, async (req, res) => {
   const { type, scheduled_at, time_label, location } = req.body; // location: { lat, lng, label }
   if (!type || !scheduled_at) return res.status(400).json({ error: 'type and scheduled_at required' });
+  // collectors are not allowed to create schedules via this endpoint
+  if (req.user.role === 'Collector') return res.status(403).json({ error: 'Collectors cannot create schedules' });
   try {
     const id = `s-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
     const conn = await pool.getConnection();
@@ -166,6 +244,134 @@ app.post('/api/schedules', authMiddleware, async (req, res) => {
         id, req.user.id, type, new Date(scheduled_at), time_label || null, location?.lat || null, location?.lng || null, location?.label || null
       ]);
       return res.status(201).json({ id });
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create a special collection request (Resident or Authority)
+app.post('/api/collections/request', authMiddleware, async (req, res) => {
+  const { item_type, preferred_date, preferred_time_label, photos, estimated_cost } = req.body;
+  // only Residents and Authority can create requests; collectors should not create requests
+  if (req.user.role === 'Collector') return res.status(403).json({ error: 'Collectors cannot create collection requests' });
+  if (!item_type) return res.status(400).json({ error: 'item_type required' });
+  try {
+    const id = `cr-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    const conn = await pool.getConnection();
+    try {
+      const preferred_dt = preferred_date ? new Date(preferred_date) : null;
+      const payment_required = (Number(estimated_cost) || 0) > 0 ? 1 : 0;
+      const status = payment_required ? 'PendingPayment' : 'Scheduled';
+      await conn.query('INSERT INTO collection_requests (id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+        id, req.user.id, item_type, preferred_dt, preferred_time_label || null, photos ? JSON.stringify(photos) : null, Number(estimated_cost) || 0, status, payment_required
+      ]);
+      return res.status(201).json({ id, status });
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// List special collection requests for current user (Residents) or all (Authority) or assigned (Collector)
+app.get('/api/collections/requests', authMiddleware, async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      if (req.user.role === 'Collector') {
+        // collectors see scheduled/assigned/paid requests (they perform collection)
+        const [rows] = await conn.query("SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests WHERE status IN ('Scheduled','Assigned','Paid') ORDER BY created_at DESC");
+        return res.json(rows.map(r => ({ id: r.id, user_id: r.user_id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, created_at: r.created_at, paid_at: r.paid_at })));
+      }
+      if (req.user.role === 'Resident') {
+        const [rows] = await conn.query('SELECT id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
+        return res.json(rows.map(r => ({ id: r.id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, created_at: r.created_at, paid_at: r.paid_at })));
+      }
+      // Authority: see all
+      const [rows] = await conn.query('SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests ORDER BY created_at DESC');
+      return res.json(rows.map(r => ({ id: r.id, user_id: r.user_id, item_type: r.item_type, preferred_datetime: r.preferred_datetime, preferred_time_label: r.preferred_time_label, photos: r.photos ? JSON.parse(r.photos) : null, estimated_cost: Number(r.estimated_cost), status: r.status, payment_required: !!r.payment_required, created_at: r.created_at, paid_at: r.paid_at })));
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update a collection request (owner or Authority). Cannot edit if already Paid
+app.put('/api/collections/request/:id', authMiddleware, async (req, res) => {
+  const id = req.params.id;
+  const { item_type, preferred_date, preferred_time_label, photos, estimated_cost } = req.body;
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const [rows] = await conn.query('SELECT id, user_id, status FROM collection_requests WHERE id = ?', [id]);
+      const r = rows[0];
+      if (!r) return res.status(404).json({ error: 'Request not found' });
+      if (req.user.role !== 'Authority' && r.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+      if (r.status === 'Paid') return res.status(400).json({ error: 'Cannot edit a paid request' });
+
+      const prefDt = preferred_date ? new Date(preferred_date) : null;
+      await conn.query('UPDATE collection_requests SET item_type = COALESCE(?, item_type), preferred_datetime = COALESCE(?, preferred_datetime), preferred_time_label = COALESCE(?, preferred_time_label), photos = COALESCE(?, photos), estimated_cost = COALESCE(?, estimated_cost) WHERE id = ?', [
+        item_type || null, prefDt, preferred_time_label || null, photos ? JSON.stringify(photos) : null, (estimated_cost !== undefined ? Number(estimated_cost) : null), id
+      ]);
+      return res.json({ ok: true });
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete a collection request (owner or Authority). If already paid, prevent deletion.
+app.delete('/api/collections/request/:id', authMiddleware, async (req, res) => {
+  const id = req.params.id;
+  try {
+    const conn = await pool.getConnection();
+    try {
+      const [rows] = await conn.query('SELECT id, user_id, status FROM collection_requests WHERE id = ?', [id]);
+      const r = rows[0];
+      if (!r) return res.status(404).json({ error: 'Request not found' });
+      if (req.user.role !== 'Authority' && r.user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+      if (r.status === 'Paid') return res.status(400).json({ error: 'Cannot delete a paid request' });
+      await conn.query('DELETE FROM collection_requests WHERE id = ?', [id]);
+      return res.json({ ok: true });
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create a payment for a request (simulate payment) - marks request paid and creates schedule if applicable
+app.post('/api/payments', authMiddleware, async (req, res) => {
+  const { request_id, amount, currency } = req.body;
+  if (!request_id || !amount) return res.status(400).json({ error: 'request_id and amount required' });
+  try {
+    const conn = await pool.getConnection();
+    try {
+      // check request exists and belongs to user (or Authority)
+      const [rows] = await conn.query('SELECT id, user_id, preferred_datetime, preferred_time_label, estimated_cost, status FROM collection_requests WHERE id = ?', [request_id]);
+      const reqRow = rows[0];
+      if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+      if (req.user.role === 'Resident' && reqRow.user_id !== req.user.id) return res.status(403).json({ error: 'Cannot pay for another user\'s request' });
+
+      // insert payment
+      const [presult] = await conn.query('INSERT INTO payments (request_id, user_id, amount, currency, status, details) VALUES (?, ?, ?, ?, ?, ?)', [request_id, reqRow.user_id, Number(amount), currency || 'USD', 'Completed', JSON.stringify({ by: req.user.id })]);
+      const paymentId = presult.insertId;
+
+      // update collection_requests to mark as paid and link payment
+      await conn.query('UPDATE collection_requests SET status = ?, payment_id = ?, paid_at = ? WHERE id = ?', ['Paid', paymentId, new Date(), request_id]);
+
+      // create schedule entry so it appears on collections schedule
+      const scheduleId = `s-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+      const scheduledAt = reqRow.preferred_datetime ? new Date(reqRow.preferred_datetime) : new Date();
+      await conn.query('INSERT INTO schedules (id, user_id, type, scheduled_at, time_label, status, location_lat, location_lng, location_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+        scheduleId, reqRow.user_id, `Special: ${reqRow.item_type}`, scheduledAt, reqRow.preferred_time_label || null, 'Scheduled', null, null, null
+      ]);
+
+      return res.status(201).json({ paymentId, scheduleId });
     } finally { conn.release(); }
   } catch (err) {
     console.error(err);
@@ -195,9 +401,64 @@ app.delete('/api/schedules/:id', authMiddleware, async (req, res) => {
   try {
     const conn = await pool.getConnection();
     try {
+      // collectors cannot delete schedules
+      if (req.user.role === 'Collector') return res.status(403).json({ error: 'Collectors cannot delete schedules' });
       const [result] = await conn.query('DELETE FROM schedules WHERE id = ? AND user_id = ?', [id, req.user.id]);
       if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found' });
       return res.json({ ok: true });
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Collections: collectors can list collections assigned to them; residents/admins can list their own/all
+app.get('/api/collections', authMiddleware, async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      // For simplicity we store collections in schedules table with status 'Collected' etc.
+      if (req.user.role === 'Collector') {
+        // collectors see collections assigned to them - in this simple model, we'll return schedules with status 'Assigned' or 'InProgress' or 'Collected'
+        const [rows] = await conn.query("SELECT id, user_id, type, scheduled_at, status, location_lat, location_lng, location_label FROM schedules WHERE status IN ('Assigned','InProgress','Collected') ORDER BY scheduled_at ASC");
+        return res.json(rows.map(r => ({ id: r.id, user_id: r.user_id, type: r.type, scheduled_at: r.scheduled_at, status: r.status, location: r.location_lat ? { lat: Number(r.location_lat), lng: Number(r.location_lng), label: r.location_label } : null })));
+      }
+      // residents: return only their schedules; Authority: return all
+      if (req.user.role === 'Resident') {
+        const [rows] = await conn.query('SELECT id, type, scheduled_at, status, location_lat, location_lng, location_label FROM schedules WHERE user_id = ? ORDER BY scheduled_at ASC', [req.user.id]);
+        return res.json(rows.map(r => ({ id: r.id, type: r.type, scheduled_at: r.scheduled_at, status: r.status, location: r.location_lat ? { lat: Number(r.location_lat), lng: Number(r.location_lng), label: r.location_label } : null })));
+      }
+      // Authority
+      const [rows] = await conn.query('SELECT id, user_id, type, scheduled_at, status, location_lat, location_lng, location_label FROM schedules ORDER BY scheduled_at ASC');
+      return res.json(rows.map(r => ({ id: r.id, user_id: r.user_id, type: r.type, scheduled_at: r.scheduled_at, status: r.status, location: r.location_lat ? { lat: Number(r.location_lat), lng: Number(r.location_lng), label: r.location_label } : null })));
+    } finally { conn.release(); }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Payments: collectors can fetch payments related to collections they performed; residents see their payments; Authority sees all
+app.get('/api/payments', authMiddleware, async (req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    try {
+      // For this prototype, simulate payments stored in a payments table. If the table doesn't exist, return empty list.
+      const [tables] = await conn.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'payments'", [DB_NAME]);
+      if (!tables || tables.length === 0) return res.json([]);
+      if (req.user.role === 'Collector') {
+        // collectors see payments they've collected - assume payments table has collector_id
+        const [rows] = await conn.query('SELECT id, amount, currency, status, created_at FROM payments WHERE collector_id = ? ORDER BY created_at DESC', [req.user.id]);
+        return res.json(rows);
+      }
+      if (req.user.role === 'Resident') {
+        const [rows] = await conn.query('SELECT id, amount, currency, status, created_at FROM payments WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
+        return res.json(rows);
+      }
+      // Authority: return all
+      const [rows] = await conn.query('SELECT id, user_id, collector_id, amount, currency, status, created_at FROM payments ORDER BY created_at DESC');
+      return res.json(rows);
     } finally { conn.release(); }
   } catch (err) {
     console.error(err);
