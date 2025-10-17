@@ -16,6 +16,22 @@ export const marker = vi.fn(() => {
   };
   return obj;
 });
-export const featureGroup = vi.fn(() => ({ getBounds: vi.fn(() => ({ pad: vi.fn().mockReturnThis() })) }));
-export const polyline = vi.fn(() => ({ addTo: vi.fn(() => ({})), remove: vi.fn() }));
-export const geoJSON = vi.fn(() => ({ addTo: vi.fn(() => ({ getBounds: vi.fn(() => ({ isValid: vi.fn(() => true), pad: vi.fn().mockReturnThis() })) })), getBounds: vi.fn(() => ({ isValid: vi.fn(() => true), pad: vi.fn().mockReturnThis() })) }));
+export const featureGroup = vi.fn(() => ({
+  getBounds: vi.fn(() => ({ pad: vi.fn().mockReturnThis() })),
+}));
+export const polyline = vi.fn(() => ({
+  addTo: vi.fn(() => ({})),
+  remove: vi.fn(),
+}));
+export const geoJSON = vi.fn(() => ({
+  addTo: vi.fn(() => ({
+    getBounds: vi.fn(() => ({
+      isValid: vi.fn(() => true),
+      pad: vi.fn().mockReturnThis(),
+    })),
+  })),
+  getBounds: vi.fn(() => ({
+    isValid: vi.fn(() => true),
+    pad: vi.fn().mockReturnThis(),
+  })),
+}));
