@@ -24,7 +24,10 @@ const DB_NAME = process.env.DB_NAME || 'csse_app';
 
 let pool;
 
-// Ensure database exists then create pool
+function getPool(req) {
+  return (req && req.dbPool) ? req.dbPool : pool;
+}
+
 async function createPoolAndEnsure() {
   // connect without database to create it if missing
   const adminConn = await mysql.createConnection({ host: DB_HOST, port: DB_PORT, user: DB_USER, password: DB_PASSWORD });
@@ -160,7 +163,7 @@ app.post('/api/auth/signup', async (req, res) => {
     if (e.endsWith('@admin.com')) role = 'Authority';
     else if (e.endsWith('@collector.com')) role = 'Collector';
 
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       const [result] = await conn.query('INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, ?, ?)', [email, name || null, role, password_hash]);
       const userId = result.insertId;
@@ -181,7 +184,7 @@ app.post('/api/auth/signin', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       const [rows] = await conn.query('SELECT id, email, name, role, password_hash FROM users WHERE email = ?', [email]);
       const user = rows[0];
@@ -253,7 +256,7 @@ app.post('/api/schedules', authMiddleware, async (req, res) => {
   if (req.user.role === 'Collector') return res.status(403).json({ error: 'Collectors cannot create schedules' });
   try {
     const id = `s-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       await conn.query('INSERT INTO schedules (id, user_id, type, scheduled_at, time_label, location_lat, location_lng, location_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
         id, req.user.id, type, new Date(scheduled_at), time_label || null, location?.lat || null, location?.lng || null, location?.label || null
@@ -274,7 +277,7 @@ app.post('/api/collections/request', authMiddleware, async (req, res) => {
   if (!item_type) return res.status(400).json({ error: 'item_type required' });
   try {
     const id = `cr-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       const preferred_dt = preferred_date ? new Date(preferred_date) : null;
       const payment_required = (Number(estimated_cost) || 0) > 0 ? 1 : 0;
@@ -293,7 +296,7 @@ app.post('/api/collections/request', authMiddleware, async (req, res) => {
 // List special collection requests for current user (Residents) or all (Authority/Admin) or assigned (Collector)
 app.get('/api/collections/requests', authMiddleware, async (req, res) => {
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       if (req.user.role === 'Collector') {
         // collectors see scheduled/assigned/paid requests (they perform collection)
@@ -337,7 +340,7 @@ app.get('/api/collections/requests', authMiddleware, async (req, res) => {
 // List collectors (users with role = 'Collector')
 app.get('/api/collectors', authMiddleware, ensureAnyRole(['Authority','Admin','Collector']), async (req, res) => {
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       const [rows] = await conn.query('SELECT id, email, name FROM users WHERE role = ? ORDER BY name ASC', ['Collector']);
       return res.json(rows.map(r => ({ id: r.id, email: r.email, name: r.name })));
@@ -354,7 +357,7 @@ app.post('/api/collections/request/:id/assign', authMiddleware, ensureRole(['Aut
   const { collector_id } = req.body;
   if (!collector_id) return res.status(400).json({ error: 'collector_id required' });
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       // ensure request exists
       const [rows] = await conn.query('SELECT id FROM collection_requests WHERE id = ?', [id]);
@@ -376,7 +379,7 @@ app.put('/api/collections/request/:id', authMiddleware, async (req, res) => {
   const id = req.params.id;
   const { item_type, preferred_date, preferred_time_label, photos, estimated_cost } = req.body;
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       const [rows] = await conn.query('SELECT id, user_id, status FROM collection_requests WHERE id = ?', [id]);
       const r = rows[0];
@@ -400,7 +403,7 @@ app.put('/api/collections/request/:id', authMiddleware, async (req, res) => {
 app.delete('/api/collections/request/:id', authMiddleware, async (req, res) => {
   const id = req.params.id;
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       const [rows] = await conn.query('SELECT id, user_id, status FROM collection_requests WHERE id = ?', [id]);
       const r = rows[0];
@@ -421,7 +424,7 @@ app.post('/api/payments', authMiddleware, async (req, res) => {
   const { request_id, amount, currency } = req.body;
   if (!request_id || !amount) return res.status(400).json({ error: 'request_id and amount required' });
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       // check request exists and belongs to user (or Authority)
       const [rows] = await conn.query('SELECT id, user_id, preferred_datetime, preferred_time_label, estimated_cost, status FROM collection_requests WHERE id = ?', [request_id]);
@@ -454,7 +457,7 @@ app.post('/api/payments', authMiddleware, async (req, res) => {
 // List schedules for current user
 app.get('/api/schedules', authMiddleware, async (req, res) => {
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       const [rows] = await conn.query('SELECT id, type, scheduled_at, time_label, status, location_lat, location_lng, location_label FROM schedules WHERE user_id = ? ORDER BY scheduled_at ASC', [req.user.id]);
       // map rows to client-friendly format
@@ -471,7 +474,7 @@ app.get('/api/schedules', authMiddleware, async (req, res) => {
 app.delete('/api/schedules/:id', authMiddleware, async (req, res) => {
   const id = req.params.id;
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       // collectors cannot delete schedules
       if (req.user.role === 'Collector') return res.status(403).json({ error: 'Collectors cannot delete schedules' });
@@ -488,7 +491,7 @@ app.delete('/api/schedules/:id', authMiddleware, async (req, res) => {
 // Collections: collectors can list collections assigned to them; residents/admins can list their own/all
 app.get('/api/collections', authMiddleware, async (req, res) => {
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       // For simplicity we store collections in schedules table with status 'Collected' etc.
       if (req.user.role === 'Collector') {
@@ -514,7 +517,7 @@ app.get('/api/collections', authMiddleware, async (req, res) => {
 // Payments: collectors can fetch payments related to collections they performed; residents see their payments; Authority sees all
 app.get('/api/payments', authMiddleware, async (req, res) => {
   try {
-    const conn = await pool.getConnection();
+    const conn = await getPool(req).getConnection();
     try {
       // For this prototype, simulate payments stored in a payments table. If the table doesn't exist, return empty list.
       const [tables] = await conn.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'payments'", [DB_NAME]);
@@ -539,15 +542,25 @@ app.get('/api/payments', authMiddleware, async (req, res) => {
 });
 
 // Start
-createPoolAndEnsure().then(p => {
-  // assign pool to module-level var by closure trick
-  global.__DB_POOL = p;
-  // replace pool getter used in routes
-  app.use((req, res, next) => { req.dbPool = p; next(); });
-  // expose getConnection helper
+if (process.env.NODE_ENV !== 'test') {
+  createPoolAndEnsure().then(p => {
+    // assign pool to module-level var by closure trick
+    global.__DB_POOL = p;
+    // replace pool getter used in routes
+    app.use((req, res, next) => { req.dbPool = p; next(); });
+    // expose getConnection helper
+    pool = p; // eslint-disable-line no-global-assign
+    app.listen(port, () => console.log(`Auth server running on port ${port}`));
+  }).catch(err => {
+    console.error('Failed to ensure database & users table', err);
+    process.exit(1);
+  });
+}
+
+// Allow tests to inject a pre-created pool so route handlers can use it
+function __setTestPool(p) {
   pool = p; // eslint-disable-line no-global-assign
-  app.listen(port, () => console.log(`Auth server running on port ${port}`));
-}).catch(err => {
-  console.error('Failed to ensure database & users table', err);
-  process.exit(1);
-});
+  app.use((req, res, next) => { req.dbPool = p; next(); });
+}
+
+export { app, createPoolAndEnsure, __setTestPool };

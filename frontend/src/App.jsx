@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Login from './pages/login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
+import CollectorDashboard from './pages/CollectorDashboard';
 import Collections from './pages/Collections';
 import WasteHistory from './pages/WasteHistory';
 import Payments from './pages/Payments';
@@ -12,10 +13,12 @@ import './App.css';
 
 function App() {
   // debug log: dump imported components to console to detect undefined values
-  try {
-    // eslint-disable-next-line no-console
-    console.log('Imported components:', { Login, Signup, Dashboard, Collections, WasteHistory, Payments, Settings, Navbar, SensorData });
-  } catch (e) {}
+  if (import.meta && import.meta.env && import.meta.env.DEV) {
+    try {
+      // eslint-disable-next-line no-console
+      console.log('Imported components:', { Login, Signup, Dashboard, Collections, WasteHistory, Payments, Settings, Navbar, SensorData });
+    } catch (e) {}
+  }
   // runtime diagnostics: check that imported route components are valid
   const importsToCheck = [
     { name: 'Login', comp: Login },
@@ -28,11 +31,8 @@ function App() {
     { name: 'Navbar', comp: Navbar },
     { name: 'SensorData', comp: SensorData }
   ];
-  const invalid = importsToCheck.filter(i => {
-    // allow React components (function or object/class)
-    return !(i.comp && (typeof i.comp === 'function' || typeof i.comp === 'object'));
-  });
-  if (invalid.length > 0) {
+  const invalid = importsToCheck.filter(i => !(i.comp && (typeof i.comp === 'function' || typeof i.comp === 'object')));
+  if (invalid.length > 0 && import.meta && import.meta.env && import.meta.env.DEV) {
     return (
       <div style={{ padding: 24 }}>
         <h2 style={{ color: '#b91c1c' }}>Import diagnostic: invalid component(s)</h2>
@@ -52,6 +52,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Login />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/collector" element={<CollectorDashboard />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/collections" element={<Collections />} />
         <Route path="/waste-history" element={<WasteHistory />} />

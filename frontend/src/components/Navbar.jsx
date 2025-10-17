@@ -44,6 +44,10 @@ export default function Navbar() {
         {/* 🔗 Navigation Links */}
         <div className="flex gap-6">
           <NavLink to="/dashboard" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Dashboard</NavLink>
+          {/* Role-aware link: show Collector Dashboard for collectors */}
+          {user && (user.role === 'Collector' || user.role === 'Authority') && (
+            <NavLink to="/collector" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Collector</NavLink>
+          )}
           <NavLink to="/waste-history" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Waste History</NavLink>
           <NavLink to="/collections" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Collections</NavLink>
           <NavLink to="/payments" className={({isActive}) => isActive ? 'text-green-700 font-medium border-b-2 border-green-600 pb-1' : 'text-gray-700 hover:text-green-600 font-medium'}>Payments</NavLink>

@@ -33,11 +33,13 @@ class RootErrorBoundary extends Component {
 }
 
 // Log App to help identify if it's undefined or not a valid component
-try {
-  // eslint-disable-next-line no-console
-  console.log('App value at startup:', App, 'typeof:', typeof App);
-} catch (e) {
-  // ignore
+if (import.meta && import.meta.env && import.meta.env.DEV) {
+  try {
+    // eslint-disable-next-line no-console
+    console.log('App value at startup:', App, 'typeof:', typeof App);
+  } catch (e) {
+    // ignore
+  }
 }
 
 createRoot(document.getElementById('root')).render(

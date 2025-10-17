@@ -29,8 +29,27 @@ export default function RouteMap({ events }) {
   useEffect(() => {
     if (!mapEl.current) return;
     // initialize map
-    const defaultCenter = events && events.length > 0 ? [events[0].location.lat, events[0].location.lng] : [6.9271, 79.8612];
-    const map = L.map(mapEl.current, { preferCanvas: true }).setView(defaultCenter, 13);
+    // find a safe default center: first event with valid lat/lng or fallback to Colombo
+    const validEvents = Array.isArray(events)
+      ? events.filter(ev => ev && ev.location && typeof ev.location.lat === 'number' && typeof ev.location.lng === 'number')
+      : [];
+    const defaultCenter = validEvents.length > 0
+      ? [validEvents[0].location.lat, validEvents[0].location.lng]
+      : [6.9271, 79.8612];
+
+    // Guard against re-initialization in React 18 StrictMode and after errors
+    if (mapRef.current) return;
+    if (mapEl.current && mapEl.current._leaflet_id) {
+      try { mapEl.current._leaflet_id = null; } catch (e) {}
+    }
+
+    const map = L.map(mapEl.current, { preferCanvas: true });
+    try {
+      map.setView(defaultCenter, 13);
+    } catch (e) {
+      // fallback in case defaultCenter is somehow invalid
+      map.setView([6.9271, 79.8612], 13);
+    }
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
     mapRef.current = map;
 
@@ -47,9 +66,11 @@ export default function RouteMap({ events }) {
     Object.values(markersRef.current).forEach(m => m.remove());
     markersRef.current = {};
     // add markers
-    events.forEach(ev => {
-      if (!ev.location || ev.location.lat == null) return;
-      const m = L.marker([ev.location.lat, ev.location.lng]).addTo(map).bindPopup(`${ev.type} • ${ev.time || ''}`);
+    (Array.isArray(events) ? events : []).forEach(ev => {
+      if (!ev || !ev.location) return;
+      const { lat, lng } = ev.location;
+      if (typeof lat !== 'number' || typeof lng !== 'number') return;
+      const m = L.marker([lat, lng]).addTo(map).bindPopup(`${ev.type} • ${ev.time || ''}`);
       markersRef.current[ev.id] = m;
     });
     // fit
