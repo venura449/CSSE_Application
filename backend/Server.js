@@ -879,7 +879,6 @@ if (process.env.NODE_ENV !== "test") {
   createPoolAndEnsure()
     .then((p) => {
       global.__DB_POOL = p;
-      s;
       app.use((req, res, next) => {
         req.dbPool = p;
         next();

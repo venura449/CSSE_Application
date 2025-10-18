@@ -1,3 +1,5 @@
+import { vi } from 'vitest';
+
 export const map = vi.fn(() => ({
   setView: vi.fn().mockReturnThis(),
   remove: vi.fn(),
