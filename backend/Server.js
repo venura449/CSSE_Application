@@ -24,12 +24,12 @@ const DB_NAME = process.env.DB_NAME || "csse_app";
 
 let pool;
 
+//
 function getPool(req) {
   return req && req.dbPool ? req.dbPool : pool;
 }
 
 async function createPoolAndEnsure() {
-  // connect without database to create it if missing
   const adminConn = await mysql.createConnection({
     host: DB_HOST,
     port: DB_PORT,
@@ -90,7 +90,6 @@ async function createPoolAndEnsure() {
     `;
     await conn.query(createCollectionRequests);
 
-    // Create payments table
     const createPayments = `
       CREATE TABLE IF NOT EXISTS payments (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -105,14 +104,11 @@ async function createPoolAndEnsure() {
       ) ENGINE=InnoDB;
     `;
     await conn.query(createPayments);
-    // Ensure existing installations get the 'role' column if it was added later
     try {
       await conn.query(
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) NOT NULL DEFAULT 'Resident'"
       );
     } catch (e) {
-      // some MySQL versions might not support IF NOT EXISTS for ADD COLUMN
-      // attempt a safer ALTER only if column missing by checking information_schema
       try {
         const [cols] = await conn.query(
           "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'",
@@ -124,11 +120,9 @@ async function createPoolAndEnsure() {
           );
         }
       } catch (ee) {
-        // log and continue; role detection will still work for new signups
         console.warn("Could not ensure role column exists:", ee.message || ee);
       }
     }
-    // Ensure collection_requests has assigned_collector_id column for older databases
     try {
       await conn.query(
         "ALTER TABLE collection_requests ADD COLUMN IF NOT EXISTS assigned_collector_id INT NULL"
@@ -384,13 +378,11 @@ app.post("/api/collections/request", authMiddleware, async (req, res) => {
   }
 });
 
-// List special collection requests for current user (Residents) or all (Authority/Admin) or assigned (Collector)
 app.get("/api/collections/requests", authMiddleware, async (req, res) => {
   try {
     const conn = await getPool(req).getConnection();
     try {
       if (req.user.role === "Collector") {
-        // collectors see scheduled/assigned/paid requests (they perform collection)
         const sqlWith = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, assigned_collector_id, created_at, paid_at FROM collection_requests WHERE status IN ('Scheduled','Assigned','Paid') ORDER BY created_at DESC`;
         const sqlWithout = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests WHERE status IN ('Scheduled','Assigned','Paid') ORDER BY created_at DESC`;
         let rows;
@@ -445,7 +437,8 @@ app.get("/api/collections/requests", authMiddleware, async (req, res) => {
           }))
         );
       }
-      // Authority/Admin: see all
+      
+
       const sqlWithAll = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, assigned_collector_id, created_at, paid_at FROM collection_requests ORDER BY created_at DESC`;
       const sqlWithoutAll = `SELECT id, user_id, item_type, preferred_datetime, preferred_time_label, photos, estimated_cost, status, payment_required, created_at, paid_at FROM collection_requests ORDER BY created_at DESC`;
       let rowsAll;
@@ -488,7 +481,8 @@ app.get("/api/collections/requests", authMiddleware, async (req, res) => {
   }
 });
 
-// List collectors (users with role = 'Collector')
+
+
 app.get(
   "/api/collectors",
   authMiddleware,
@@ -514,7 +508,8 @@ app.get(
   }
 );
 
-// Assign a collector to a collection request (Authority/Admin only)
+
+
 app.post(
   "/api/collections/request/:id/assign",
   authMiddleware,

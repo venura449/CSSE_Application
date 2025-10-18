@@ -4,6 +4,7 @@ import { app, createPoolAndEnsure, __setTestPool } from "./Server.js";
 
 let pool;
 
+//Sign up and sign in helper
 async function signupAndSignin(email, password = "pw123456", name = "User") {
   const signup = await request(app)
     .post("/api/auth/signup")
@@ -32,6 +33,7 @@ describe("Middleware and role guards", () => {
   });
 });
 
+// Risini Budara
 describe("Collections and schedules listing by role", () => {
   it("resident sees own schedules; authority sees all; collector sees filtered", async () => {
     const resident = await signupAndSignin(`rlist_${Date.now()}@user.com`);
@@ -71,6 +73,7 @@ describe("Collections and schedules listing by role", () => {
   });
 });
 
+//Risini Budara
 describe("Edit/Delete collection requests edge cases", () => {
   it("forbids non-owner edit; prevents deleting paid; allows owner delete pending", async () => {
     const owner = await signupAndSignin(`owner_${Date.now()}@user.com`);
@@ -150,6 +153,7 @@ describe("Delete schedule endpoint", () => {
   });
 });
 
+//Risini Budara
 describe("Payments listing by role", () => {
   it("authority sees all payments; resident sees own", async () => {
     const authority = await signupAndSignin(`pp_${Date.now()}@admin.com`);
@@ -173,5 +177,7 @@ describe("Payments listing by role", () => {
     expect(aa.status).toBe(200);
   });
 });
+
+
 
 

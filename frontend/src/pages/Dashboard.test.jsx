@@ -3,7 +3,7 @@ import React from "react";
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import Dashboard from "./Dashboard.jsx";
 
-// Mock leaflet to prevent window object issues
+
 vi.mock("leaflet", () => ({
   map: vi.fn(() => ({
     setView: vi.fn().mockReturnThis(),
