@@ -1,0 +1,14 @@
+{
+  "name": "csse-application",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "start": "concurrently \"npm --prefix backend start\" \"npm --prefix frontend run preview\"",
+    "test": "concurrently \"npm --prefix backend test\" \"npm --prefix frontend test\"",
+    "test:coverage": "concurrently \"npm --prefix backend run test:coverage\" \"npm --prefix frontend run test:coverage\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}
